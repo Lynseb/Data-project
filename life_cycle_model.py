@@ -1,15 +1,27 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 
-def simulate_lifecycle(seed=23, N=50000):
-    """
-    Simulates the life-cycle income model from age 18 to 65.
-    
-    Returns a dictionary containing income, human capital, employment status,
-    and initial parameters for analysis.
-    """
+def simulate_lifecycle(
+    seed=23,
+    N=50000,
+    sigma_p=0.05,  # Job-separation (layoff) probability (can be scalar or array for Task 2.5)
+    lambda_p=0.60,  # Job-finding probability (can be scalar or array for Task 2.5)
+
+     # -----------------------------------------------------------------------------
+        # TASK 2.4: The following switches off specific features of the model for alternative scenarios.
+        # To calculate the effect of each feature,
+        # -----------------------------------------------------------------------------
+
+    no_edu_diff=False,  # Sluk uddannelsesforskelle
+    no_shocks=False,  # Sluk humankapitalstød (sigma_psi = 0)
+    no_depr=False,  # Sluk depreciering ved ledighed (delta = 0)
+    no_unemp=False,  # Sluk arbejdsløshed (sigma_p = 0)
+):
+    """Simulates the life-cycle income model from age 18 to 65."""
+
+
     # Initialize random number generator for reproducibility
     rng = np.random.default_rng(seed)
     T = 65 - 18  # 47 years (from age 18 to 65)
@@ -18,15 +30,57 @@ def simulate_lifecycle(seed=23, N=50000):
     p_e = [0.40, 0.35, 0.25]  # Education probabilities [short, medium, long]
     S_e = [1, 3, 5]  # Years of education for each track
     h_e0 = [1.00, 1.20, 1.55]  # Initial human capital for each education level
-    Delta_e = [0.010, 0.020, 0.030]  # Growth rate of human capital for each education level
+    Delta_e = [
+        0.010,
+        0.020,
+        0.030,
+    ]  # Growth rate of human capital for each education level
     delta = 0.06  # Depreciation rate of human capital when unemployed
-    sigma_psi = 0.10  # Standard deviation of the lognormal shock to human capital
-    lambda_p = 0.60  # Job-finding probability for unemployed individuals
-    sigma_p = 0.05  # Job-separation (layoff) probability for employed individuals
+    sigma_psi = (
+        0.10  # Standard deviation of the lognormal shock to human capital
+    )
+
+    # -----------------------------------------------------------------------------
+    # TASK 2.5 EXTENSION: Support time-varying labor market shocks (Recessions/External Shocks)
+    # Convert scalar probabilities to vectors across time T if single values are passed.
+    # -----------------------------------------------------------------------------
+    sigma_p_vec = (
+        np.array(sigma_p)
+        if isinstance(sigma_p, (list, np.ndarray))
+        else np.full(T, sigma_p)
+    )
+    lambda_p_vec = (
+        np.array(lambda_p)
+        if isinstance(lambda_p, (list, np.ndarray))
+        else np.full(T, lambda_p)
+    )
 
     y_SU = 0.45  # Student grant (income during education)
     rho = 0.60  # Unemployment benefit replacement rate (60% of previous wage)
-    y_underline = 0.35  # Minimum benefit floor (social assistance for never-employed)
+    y_underline = (
+        0.35  # Minimum benefit floor (social assistance for never-employed)
+    )
+
+    # -----------------------------------------------------------------------------
+    # TASK 2.4 SWITCHES: Overwrite parameters if alternative scenarios are active
+    # -----------------------------------------------------------------------------
+    if no_shocks:
+        sigma_psi = 0.0  # Turn off productivity shocks
+
+    if no_depr:
+        delta = 0.0  # Turn off human capital depreciation during unemployment
+
+    if no_unemp:
+        sigma_p_vec = np.zeros(T)  # No layoffs (nobody loses their job)
+        lambda_p_vec = np.ones(
+            T
+        )  # Immediate job finding for unemployed (lambda = 1.0)
+
+    if no_edu_diff:
+        # Equalize initial human capital, growth rates, and education duration
+        h_e0 = [1.20, 1.20, 1.20]
+        Delta_e = [0.020, 0.020, 0.020]
+        S_e = [0, 0, 0]  # Everyone starts working at the same age
 
     # 1. Randomly assign education levels to individuals based on probabilities p_e
     edu_idx = rng.choice([0, 1, 2], size=N, p=p_e)
@@ -47,9 +101,16 @@ def simulate_lifecycle(seed=23, N=50000):
 
     # 3. Main simulation loop running year by year (t = 0 corresponds to age 18, t = 46 to age 64)
     for t in range(T):
+        # Fetch current year parameters (Supports Task 2.5 time-varying shocks)
+        current_sigma_p = sigma_p_vec[t]
+        current_lambda_p = lambda_p_vec[t]
+
         # Draw a mean-one lognormal shock to human capital for each individual
         # The term -0.5 * sigma_psi**2 corrects the mean of the lognormal distribution to exactly 1.0
-        psi = rng.lognormal(-0.5 * sigma_psi**2, sigma_psi, size=N)
+        if sigma_psi > 0:
+            psi = rng.lognormal(-0.5 * sigma_psi**2, sigma_psi, size=N)
+        else:
+            psi = np.ones(N)  # No shock (multiplier = 1.0)
 
         # -----------------------------------------------------------------------------
         # STATE 1: Individuals currently in education (t < S_i)
@@ -69,9 +130,19 @@ def simulate_lifecycle(seed=23, N=50000):
         # -----------------------------------------------------------------------------
         entering = t == S_i
         if np.any(entering):
-            income[entering, t] = y_underline  # Benefit floor for never-employed
-            h[entering, t] = h_0_i[entering]
-            employed[entering, t] = False  # Enters as unemployed
+            if no_unemp:
+                # If unemployment is turned off, individuals start directly in employment
+                income[entering, t] = h_0_i[entering]
+                h[entering, t] = h_0_i[entering]
+                employed[entering, t] = True
+                has_been_employed[entering] = True
+                last_job_income[entering] = h_0_i[entering]
+            else:
+                income[entering, t] = (
+                    y_underline  # Benefit floor for never-employed
+                )
+                h[entering, t] = h_0_i[entering]
+                employed[entering, t] = False  # Enters as unemployed
 
         # -----------------------------------------------------------------------------
         # STATE 3: Active on the labor market in subsequent years (t > S_i)
@@ -86,10 +157,16 @@ def simulate_lifecycle(seed=23, N=50000):
             # Draw random uniform values between 0 and 1 to determine Markov transition outcomes
             draws = rng.random(size=np.sum(on_market))
 
-            # Markov transition logic:
-            # - If previously employed (prev_emp == True): Remains employed if draw > sigma_p (95% chance to stay employed).
-            # - If previously unemployed (prev_emp == False): Finds job if draw < lambda_p (60% chance to find job).
-            now_emp = np.where(prev_emp, draws > sigma_p, draws < lambda_p)
+            # Markov transition logic (Using Task 2.5 time-varying probabilities current_sigma_p & current_lambda_p):
+            # - If previously employed (prev_emp == True): Remains employed if draw > current_sigma_p.
+            # - If previously unemployed (prev_emp == False): Finds job if draw < current_lambda_p.
+            if no_unemp:
+                now_emp = np.ones(np.sum(on_market), dtype=bool)
+            else:
+                now_emp = np.where(
+                    prev_emp, draws > current_sigma_p, draws < current_lambda_p
+                )
+
             employed[on_market, t] = now_emp
 
             # Fetch previous human capital, education growth rate, and current shock
@@ -129,11 +206,11 @@ def simulate_lifecycle(seed=23, N=50000):
 
     # Return all simulation data for analysis and visualization
     return {
-        'income': income,
-        'h': h,
-        'employed': employed,
-        'edu_idx': edu_idx,
-        'p_e': p_e,
-        'sigma_p': sigma_p,
-        'lambda_p': lambda_p,
+        "income": income,
+        "h": h,
+        "employed": employed,
+        "edu_idx": edu_idx,
+        "p_e": p_e,
+        "sigma_p": sigma_p_vec,
+        "lambda_p": lambda_p_vec,
     }
