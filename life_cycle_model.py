@@ -14,10 +14,10 @@ def simulate_lifecycle(
         # To calculate the effect of each feature,
         # -----------------------------------------------------------------------------
 
-    no_edu_diff=False,  # Sluk uddannelsesforskelle
-    no_shocks=False,  # Sluk humankapitalstød (sigma_psi = 0)
-    no_depr=False,  # Sluk depreciering ved ledighed (delta = 0)
-    no_unemp=False,  # Sluk arbejdsløshed (sigma_p = 0)
+    no_edu_diff=False,  # Turn off education differences
+    no_shocks=False,  # Turn off productivity shocks
+    no_depr=False,  # Turn off human capital depreciation during unemployment
+    no_unemp=False,  # Turn off unemployment
 ):
     """Simulates the life-cycle income model from age 18 to 65."""
 
